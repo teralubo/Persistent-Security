@@ -32,10 +32,12 @@ Requires CMake 3.16+ and a C11 compiler.
     cmake --build build
     ctest --test-dir build --output-on-failure
 
-The tests check SHA-256 and PBKDF2 known-answer vectors, missing configuration,
-PIN setup, restart behavior, wrong PIN handling, persistent backoff, fresh
-authentication after restart, a simulated power interruption before atomic commit, invalid direction values, corrupt records, and failed
-storage reads.
+The tests cover:
+
+- SHA-256 and PBKDF2 known-answer vectors, including the production iteration count.
+- Missing configuration, setup, restarts, wrong PINs, and persistent backoff.
+- A simulated power interruption before atomic commit and storage failures.
+- Invalid direction values and corrupt records.
 
 ## Firmware integration outline
 
@@ -91,6 +93,7 @@ implement a STM32 Flash driver.
 ## License
 
 MIT. See LICENSE.
+
 ## Git workflow
 
 Clone the repository and work on the main branch:
