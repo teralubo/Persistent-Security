@@ -49,6 +49,7 @@ typedef enum {
     PsStatusNotConfigured,
     PsStatusBadArgument,
     PsStatusAlreadyConfigured,
+    PsStatusNotAuthenticated,
     PsStatusWrongPin,
     PsStatusLocked,
     PsStatusCorruptRecord,
@@ -87,6 +88,12 @@ PsStatus ps_security_verify(
     uint64_t* retry_after_ms);
 
 /* True only after verification in this process lifetime. */
+
+PsStatus ps_security_change_pin(
+    PsSecurity* security,
+    PsRandom random,
+    const PsDirection* new_pin,
+    size_t new_pin_length);
 bool ps_security_is_authenticated(const PsSecurity* security);
 
 /* Unconfigured devices are allowed through, so an absent record cannot brick

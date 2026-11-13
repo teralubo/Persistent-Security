@@ -209,6 +209,51 @@ PsStatus ps_security_verify(
     return PsStatusWrongPin;
 }
 
+
+PsStatus ps_security_change_pin(
+    PsSecurity* security,
+    PsRandom random,
+    const PsDirection* new_pin,
+    size_t new_pin_length) {
+    if(security == NULL || random.fill == NULL || !ps_pin_is_valid(new_pin, new_pin_length)) {
+        return PsStatusBadArgument;
+    }
+    if(security->faulted) return PsStatusStoreError;
+    if(!security->configured) return PsStatusNotConfigured;
+    if(!security->authenticated) return PsStatusNotAuthenticated;
+
+    uint8_t record[PS_RECORD_SIZE] = {0U};
+    record[0] = 'F';
+    record[1] = 'P';
+    record[2] = 'S';
+    record[3] = '1';
+    record[4] = PS_RECORD_VERSION;
+    ps_write_be32(&record[8], PS_KDF_ITERATIONS);
+
+    if(!random.fill(random.context, &record[16], PS_SALT_SIZE)) {
+        ps_secure_zero(record, sizeof(record));
+        return PsStatusCryptoError;
+    }
+    if(!ps_derive_verifier(new_pin, new_pin_length, &record[16], &record[32])) {
+        ps_secure_zero(record, sizeof(record));
+        return PsStatusCryptoError;
+    }
+    ps_update_record_checksum(record);
+    if(!security->store.write_record_atomic(
+           security->store.context, record, sizeof(record))) {
+        security->faulted = true;
+        security->authenticated = false;
+        ps_secure_zero(record, sizeof(record));
+        return PsStatusStoreError;
+    }
+
+    memcpy(security->record, record, sizeof(record));
+    security->failed_attempts = 0U;
+    security->authenticated = true;
+    security->next_attempt_ms = 0U;
+    ps_secure_zero(record, sizeof(record));
+    return PsStatusReady;
+}
 bool ps_security_is_authenticated(const PsSecurity* security) {
     return security != NULL && security->configured && !security->faulted &&
            security->authenticated;

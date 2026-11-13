@@ -225,6 +225,61 @@ static bool test_atomic_write_failure_and_corruption(void) {
     return true;
 }
 
+
+static bool test_change_pin_requires_authentication_and_persists(void) {
+    static const PsDirection new_pin[PS_PIN_MIN_LENGTH] = {
+        PsDirectionLeft,  PsDirectionLeft,  PsDirectionUp,    PsDirectionRight,
+        PsDirectionDown,  PsDirectionUp,    PsDirectionLeft,  PsDirectionDown,
+        PsDirectionRight, PsDirectionRight, PsDirectionUp,    PsDirectionLeft,
+        PsDirectionDown,  PsDirectionRight, PsDirectionUp,    PsDirectionDown,
+    };
+
+    PsPcStore backing;
+    ps_pc_store_init(&backing);
+    PsStore store = ps_pc_store_interface(&backing);
+    PsSecurity security;
+    CHECK(ps_security_init(&security, store, 0U) == PsStatusNotConfigured);
+    CHECK(ps_security_configure(
+              &security,
+              ps_pc_random_interface(&backing),
+              correct_pin,
+              sizeof(correct_pin) / sizeof(correct_pin[0])) == PsStatusReady);
+    CHECK(ps_security_change_pin(
+              &security,
+              ps_pc_random_interface(&backing),
+              new_pin,
+              sizeof(new_pin) / sizeof(new_pin[0])) == PsStatusNotAuthenticated);
+
+    CHECK(ps_security_verify(
+              &security,
+              correct_pin,
+              sizeof(correct_pin) / sizeof(correct_pin[0]),
+              0U,
+              NULL) == PsStatusReady);
+    CHECK(ps_security_change_pin(
+              &security,
+              ps_pc_random_interface(&backing),
+              new_pin,
+              sizeof(new_pin) / sizeof(new_pin[0])) == PsStatusReady);
+    CHECK(ps_security_is_authenticated(&security));
+
+    PsSecurity after_restart;
+    CHECK(ps_security_init(&after_restart, store, 0U) == PsStatusReady);
+    CHECK(!ps_security_is_authenticated(&after_restart));
+    CHECK(ps_security_verify(
+              &after_restart,
+              wrong_pin,
+              sizeof(wrong_pin) / sizeof(wrong_pin[0]),
+              0U,
+              NULL) == PsStatusWrongPin);
+    CHECK(ps_security_verify(
+              &after_restart,
+              new_pin,
+              sizeof(new_pin) / sizeof(new_pin[0]),
+              1000U,
+              NULL) == PsStatusReady);
+    return true;
+}
 static bool test_storage_read_failure_fails_closed(void) {
     PsPcStore backing;
     ps_pc_store_init(&backing);
@@ -253,6 +308,7 @@ int main(void) {
         {"unconfigured and configure", test_unconfigured_and_configure},
         {"restart, wrong PIN, backoff, authentication", test_restart_wrong_pin_backoff_and_authentication},
         {"atomic write failure and corruption", test_atomic_write_failure_and_corruption},
+        {"authenticated PIN change persists across restart", test_change_pin_requires_authentication_and_persists},
         {"storage read failure fails closed", test_storage_read_failure_fails_closed},
     };
 
