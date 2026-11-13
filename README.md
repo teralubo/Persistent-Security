@@ -39,6 +39,55 @@ The tests cover:
 - A simulated power interruption before atomic commit and storage failures.
 - Invalid direction values and corrupt records.
 
+## Install and use on a Flipper
+
+This v0.1 repository is a C11 library, not a Flipper application package. It
+does not produce a FAP, and copying these files to a microSD card or installing
+them with qFlipper will not activate a PIN gate.
+
+### Get the project and run it on a PC
+
+    git clone https://github.com/T4r4L/Persistent-Security.git
+    cd Persistent-Security
+    cmake -S . -B build
+    cmake --build build
+    ctest --test-dir build --output-on-failure
+
+This builds and runs the host tests. It does not install anything on a Flipper.
+
+### Integrate it into a firmware build
+
+The current repository does not include a Flipper firmware adapter, PIN screen,
+or protected-service hooks. To use the library in a firmware build:
+
+1. Add include/ps_security.h, src/ps_security.c, and src/ps_crypto.c to the
+   firmware build and add include/ to its include paths. Do not add tests/pc_store.c
+   to device firmware.
+2. Implement PsStore for a verified persistent storage area. The 96-byte record
+   writer must preserve either the old complete record or the new complete
+   record across resets and interrupted writes. No STM32 address or Flash driver
+   is supplied here.
+3. Implement PsRandom.fill using a cryptographically suitable firmware random
+   source. Pass a monotonic millisecond clock to ps_security_init and
+   ps_security_verify.
+4. Build a UI that collects 16–64 directional events and calls
+   ps_security_configure for first-time setup or ps_security_verify to unlock.
+   Clear the temporary direction buffer after use.
+5. Initialize PsSecurity at each boot. If initialization returns
+   PsStatusNotConfigured, complete setup before claiming that protection is
+   active. After setup, and before each protected action, require
+   ps_security_allows_protected_action to return true. On a false result,
+   request the PIN and call ps_security_verify.
+6. Add the gate check to every firmware entry point that needs protection, then
+   test those paths on hardware. This repository alone does not block the
+   launcher, RPC/qFlipper, SD, GPIO, USB, or recovery functions.
+
+A real device integration needs a verified storage design, firmware build
+integration, UI, and access checks. Benchmark the 120,000-iteration KDF on the
+target and test persistence across actual power removal before relying on it.
+See Security limits below for the behavior when a stored record is missing or
+damaged.
+
 ## Firmware integration outline
 
 The module deliberately leaves button input, user interface, random-number
