@@ -37,56 +37,104 @@ The tests cover:
 - SHA-256 and PBKDF2 known-answer vectors, including the production iteration count.
 - Missing configuration, setup, restarts, wrong PINs, and persistent backoff.
 - A simulated power interruption before atomic commit and storage failures.
-- Invalid direction values and corrupt records.
+- Invalid direction values, corrupt records, and authenticated PIN changes across restart.
 
-## Install and use on a Flipper
+## Install and use on a real Flipper Zero
 
-This v0.1 repository is a C11 library, not a Flipper application package. It
-does not produce a FAP, and copying these files to a microSD card or installing
-them with qFlipper will not activate a PIN gate.
+### What this version can be installed as
 
-### Get the project and run it on a PC
+This repository currently contains a C library and PC tests, not a ready-to-install
+Flipper app or firmware package. It does not create a FAP. Copying files to the
+microSD card, using qFlipper to copy them, or using ufbt to launch an app will
+not protect the device: a standalone app cannot gate the launcher or firmware
+services. The integration steps below require firmware source changes and a
+device-specific storage adapter. No ready-to-flash image is published here.
 
-    git clone https://github.com/T4r4L/Persistent-Security.git
-    cd Persistent-Security
-    cmake -S . -B build
-    cmake --build build
-    ctest --test-dir build --output-on-failure
+### Prepare a firmware checkout
 
-This builds and runs the host tests. It does not install anything on a Flipper.
+When a firmware integration has been prepared, start from the official Flipper
+Zero firmware repository (not a Momentum checkout):
 
-### Integrate it into a firmware build
+    git clone --recursive https://github.com/flipperdevices/flipperzero-firmware.git
+    cd flipperzero-firmware
+    git switch -c persistent-security-integration
 
-The current repository does not include a Flipper firmware adapter, PIN screen,
-or protected-service hooks. To use the library in a firmware build:
+This repository does not yet contain a patch that can be applied to that
+checkout. A firmware integrator must add include/ps_security.h, src/ps_security.c,
+src/ps_crypto.c, and src/ps_crypto.h to a firmware build target, then implement
+the persistent storage adapter, the PIN user interface, and checks at every
+protected entry point. Do not include tests/pc_store.c in device firmware. The
+storage adapter must use an approved persistent region and provide atomic
+old-record-or-new-record writes; this project supplies no STM32 Flash driver or
+memory address.
 
-1. Add include/ps_security.h, src/ps_security.c, and src/ps_crypto.c to the
-   firmware build and add include/ to its include paths. Do not add tests/pc_store.c
-   to device firmware.
-2. Implement PsStore for a verified persistent storage area. The 96-byte record
-   writer must preserve either the old complete record or the new complete
-   record across resets and interrupted writes. No STM32 address or Flash driver
-   is supplied here.
-3. Implement PsRandom.fill using a cryptographically suitable firmware random
-   source. Pass a monotonic millisecond clock to ps_security_init and
-   ps_security_verify.
-4. Build a UI that collects 16–64 directional events and calls
-   ps_security_configure for first-time setup or ps_security_verify to unlock.
-   Clear the temporary direction buffer after use.
-5. Initialize PsSecurity at each boot. If initialization returns
-   PsStatusNotConfigured, complete setup before claiming that protection is
-   active. After setup, and before each protected action, require
-   ps_security_allows_protected_action to return true. On a false result,
-   request the PIN and call ps_security_verify.
-6. Add the gate check to every firmware entry point that needs protection, then
-   test those paths on hardware. This repository alone does not block the
-   launcher, RPC/qFlipper, SD, GPIO, USB, or recovery functions.
+### Build and install the integrated firmware
 
-A real device integration needs a verified storage design, firmware build
-integration, UI, and access checks. Benchmark the 120,000-iteration KDF on the
-target and test persistence across actual power removal before relying on it.
-See Security limits below for the behavior when a stored record is missing or
-damaged.
+After those integration changes exist and have been reviewed, build the firmware
+with the Flipper Build Tool:
+
+    ./fbt
+
+To build, upload, and install the USB update package on a normally booted,
+working Flipper Zero:
+
+    ./fbt flash_usb
+
+On Windows, use the repository's command wrapper:
+
+    .\fbt.cmd
+    .\fbt.cmd flash_usb
+
+The official firmware documentation describes these FBT targets and platform
+setup: [Flipper firmware build guide](https://github.com/flipperdevices/flipperzero-firmware/blob/dev/ReadMe.md)
+and [FBT reference](https://github.com/flipperdevices/flipperzero-firmware/blob/dev/documentation/fbt.md).
+The device must be running working firmware for USB updater installation. This
+project has not been integrated, built, or installed on a Flipper; the commands
+above alone will build the official firmware without Persistent Security.
+
+### Set the first directional PIN
+
+The PIN is a sequence of 16–64 direction presses (UP, DOWN, LEFT, RIGHT), not a
+numeric keypad PIN. The library has no on-device setup screen yet. After a
+firmware UI and adapter have been written:
+
+1. On first boot, call ps_security_init with the storage adapter and monotonic
+   time. PsStatusNotConfigured means no credential record was found.
+2. In a setup screen, collect the sequence twice and have the user confirm it.
+   Check that both entries match and contain only direction values.
+3. Call ps_security_configure with the sequence and a cryptographically suitable
+   random provider. A successful write returns PsStatusReady but does not mark
+   the user authenticated. Prompt for the sequence again and call
+   ps_security_verify; only a successful verification opens the session.
+4. Check ps_security_allows_protected_action before every protected action.
+
+Until the setup UI and durable adapter are integrated, there is no way to set a
+PIN on the physical device from this repository alone.
+
+### Unlock and change the PIN
+
+At each boot, initialize a fresh PsSecurity object. After a configured record is
+loaded, authentication is false. The device UI should request the directional
+sequence, call ps_security_verify with the current monotonic time, and allow
+protected actions only after it returns PsStatusReady and
+ps_security_allows_protected_action returns true. Wrong attempts return
+PsStatusWrongPin; PsStatusLocked includes the remaining delay. The delay and
+failed-attempt count survive restarts only when the firmware adapter provides
+the required durable atomic storage.
+
+To change the PIN in an integrated build:
+
+1. Enter the current sequence and verify it successfully in this boot session.
+2. Collect the new sequence twice in the UI and check that the entries match.
+3. Call ps_security_change_pin with the new sequence and random provider. This
+   API requires the current session to be authenticated and persists a new salt
+   and verifier atomically. On success, the session remains authenticated.
+4. If the device reboots before the change is committed, the adapter must expose
+   either the old complete record or the new complete record.
+
+The library API supports this authenticated change, but the repository does not
+include a PIN screen or a user-facing change menu. Lost-PIN reset and disable
+flows are not implemented. Do not edit the stored binary record manually.
 
 ## Firmware integration outline
 
